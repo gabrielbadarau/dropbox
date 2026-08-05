@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.10" />
+    <!-- Direct override: Microsoft.AspNetCore.OpenApi 10.0.10 transitively pulls in
+         Microsoft.OpenApi 2.0.0, which has a known high-severity DoS advisory
+         (GHSA-v5pm-xwqc-g5wc, patched at 2.7.5+). Pin to latest 2.x to stay within
+         the same major version AspNetCore.OpenApi expects. -->
+    <PackageReference Include="Microsoft.OpenApi" Version="2.11.0" />
+  </ItemGroup>
+
+</Project>

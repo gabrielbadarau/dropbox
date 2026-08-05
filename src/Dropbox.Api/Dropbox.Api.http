@@ -1,0 +1,6 @@
+@Dropbox.Api_HostAddress = http://localhost:5261
+
+GET {{Dropbox.Api_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
