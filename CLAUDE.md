@@ -19,8 +19,9 @@ conversation this file originated from for the full process.
   - [x] Part 1: git init, local git identity, `.gitignore`, public GitHub repo via `gh`
   - [x] Part 2: `.NET` solution skeleton - `Dropbox.Api` (controller-based Web API, net10.0), `/health` endpoint
   - [x] Part 3: `docker-compose.yml` (Postgres 18 + MinIO), `CLAUDE.md` (this file)
-- [ ] **Step 2 - Data model & database**
-  - EF Core, normalized relational schema (Files, Chunks, Users, SharedFiles), migrations against dockerized Postgres
+- [x] **Step 2 - Data model & database**
+  - [x] Part 1: EF Core + Npgsql wiring, connection string via User Secrets, `/health` extended to check real DB connectivity
+  - [x] Part 2: Normalized entity schema (`User`, `FileMetadata`, `Chunk`, `SharedFile`), initial migration applied to dockerized Postgres
 - [ ] **Step 3 - Auth basics**
   - Minimal JWT-based current-user concept, just enough for ownership/sharing to mean something
 - [ ] **Step 4 - Upload flow (small files)**
@@ -136,6 +137,35 @@ Each entry: what we chose, why, and (if applicable) what we reversed and why.
 16. **Local dev credentials live in a gitignored `.env`**, with `.env.example`
     committed as the template. Never hardcoded directly into
     `docker-compose.yml`.
+
+17. **`Dropbox.Api`'s Postgres connection string lives in .NET User Secrets**,
+    not `appsettings.json` and not `.env`. Unlike a gitignored file, User
+    Secrets store the value entirely outside the repo directory
+    (`~/.microsoft/usersecrets/<id>/secrets.json`), so there's no file in
+    this repo that could ever leak it, structurally. The `<UserSecretsId>`
+    GUID in `Dropbox.Api.csproj` is just a pointer, safe to commit.
+
+18. **`dotnet-ef` installed as a repo-local pinned tool** (`dotnet-tools.json`),
+    not a global tool - same reproducibility reasoning as pinning NuGet
+    packages and the MinIO image tag.
+
+19. **`User` deliberately excludes auth fields (e.g. password hash) in Step 2.**
+    The schema needed a real FK target for file ownership/sharing now, but
+    guessing at auth-specific columns before Step 3 decides the actual auth
+    mechanism would be speculative. Step 3 adds whatever fields it needs via
+    a new migration - normal incremental schema evolution, not a redo.
+
+20. **Chunk.Index added beyond the reference spec's literal chunk fields**
+    (which only lists id/status/eTag). Needed for any usable chunk
+    reassembly/ordering ahead of Step 6's multipart upload deep dive - a
+    deliberate, minimal addition, not scope creep.
+
+21. **Entity IDs are client-generated GUIDs** (`Guid.NewGuid()` as a property
+    default), not server-generated (e.g. Postgres `gen_random_uuid()`).
+    Simpler - usable immediately after `new()`, no DB round-trip needed to
+    get an ID back. Known tradeoff not worth solving at this scale: random
+    (v4) GUIDs fragment B-tree index locality on insert at high volume;
+    sequential/UUIDv7-style IDs are the real-world fix, irrelevant here.
 
 ## Known limitations
 
