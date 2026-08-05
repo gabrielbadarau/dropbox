@@ -1,0 +1,28 @@
+## .NET
+bin/
+obj/
+*.user
+*.suo
+.vs/
+
+## Rider / VS Code
+.idea/
+.vscode/
+
+## OS
+.DS_Store
+Thumbs.db
+
+## Env / secrets
+.env
+*.env.local
+
+## Logs
+*.log
+
+## Test results
+[Tt]est[Rr]esult*/
+coverage/
+
+## Docker volumes (if ever bind-mounted locally)
+.data/
