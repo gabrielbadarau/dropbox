@@ -22,8 +22,10 @@ conversation this file originated from for the full process.
 - [x] **Step 2 - Data model & database**
   - [x] Part 1: EF Core + Npgsql wiring, connection string via User Secrets, `/health` extended to check real DB connectivity
   - [x] Part 2: Normalized entity schema (`User`, `FileMetadata`, `Chunk`, `SharedFile`), initial migration applied to dockerized Postgres
-- [ ] **Step 3 - Auth basics**
-  - Minimal JWT-based current-user concept, just enough for ownership/sharing to mean something
+- [x] **Step 3 - Auth basics**
+  - [x] Part 1: `User.PasswordHash` added via migration
+  - [x] Part 2: `POST /auth/register`, `POST /auth/login` - password hashing, JWT issuance
+  - [x] Part 3: JWT Bearer middleware enforced, `[Authorize] GET /auth/me`
 - [ ] **Step 4 - Upload flow (small files)**
   - Presigned-URL pattern against MinIO, status transition uploading -> uploaded via MinIO event notification
 - [ ] **Step 5 - Download flow**
@@ -167,6 +169,28 @@ Each entry: what we chose, why, and (if applicable) what we reversed and why.
     (v4) GUIDs fragment B-tree index locality on insert at high volume;
     sequential/UUIDv7-style IDs are the real-world fix, irrelevant here.
 
+22. **Passwords hashed with the built-in `PasswordHasher<T>`**
+    (`Microsoft.AspNetCore.Identity`), not the full ASP.NET Core Identity
+    system (`UserManager`/`SignInManager`/`IdentityDbContext`). It's part of
+    the shared framework already referenced by `Microsoft.NET.Sdk.Web` - no
+    extra package needed, confirmed by a clean build. Gets real, current
+    password hashing without the heavier Identity machinery we don't need.
+
+23. **No refresh tokens.** Access tokens are short-lived (60 min) JWTs only.
+    Refresh tokens add real complexity (rotation, revocation, storage) that
+    doesn't serve "just enough for ownership/sharing to mean something" -
+    deliberate scope cut, not an oversight. See Known Limitations.
+
+24. **`options.MapInboundClaims = false` on the JWT Bearer handler.** Real
+    bug, not a style choice: `JwtSecurityTokenHandler` silently remaps short
+    claim names (`sub`, `email`) to legacy `ClaimTypes.*` URIs by default
+    when building the `ClaimsPrincipal`. First working version of
+    `GET /auth/me` returned `200` with `userId`/`email` both `null` - auth
+    succeeded, claim lookup silently failed. Diagnosed and fixed rather than
+    working around it with `ClaimTypes.NameIdentifier` lookups, since we
+    control both the issuer and the consumer of these tokens and there's no
+    reason to want the remapping.
+
 ## Known limitations
 
 Deliberate, documented gaps - not oversights.
@@ -191,6 +215,15 @@ Deliberate, documented gaps - not oversights.
   that profile having no HTTPS binding, used deliberately for fast curl-based
   smoke tests. Will be addressed properly once we decide on a TLS termination
   strategy for Docker (Step 9).
+- **No refresh tokens.** 60 minute access tokens only; once expired, the
+  client just has to log in again. Fine for curl-based local testing.
+- **Registration has a benign race condition.** `POST /auth/register` checks
+  for an existing email before inserting, but two concurrent registrations
+  for the same email could both pass that check before either inserts. The
+  database's unique index on `Email` (Step 2) is still the real safety net -
+  the second insert would fail - but the caller would get an unhandled
+  `DbUpdateException` instead of a clean `409`. Not fixed: very low odds at
+  this project's scale, not worth the extra handling yet.
 
 ## Local environment
 
