@@ -1,7 +1,10 @@
+using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
 using Dropbox.Api.Auth;
 using Dropbox.Api.Contracts;
 using Dropbox.Api.Data;
 using Dropbox.Api.Data.Entities;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -61,5 +64,14 @@ public class AuthController(
 
         var token = tokenService.GenerateToken(user.Id, user.Email);
         return Ok(new AuthResponse(token, user.Id, user.Email));
+    }
+
+    [Authorize]
+    [HttpGet("me")]
+    public IActionResult Me()
+    {
+        var userId = User.FindFirstValue(JwtRegisteredClaimNames.Sub);
+        var email = User.FindFirstValue(JwtRegisteredClaimNames.Email);
+        return Ok(new { userId, email });
     }
 }
