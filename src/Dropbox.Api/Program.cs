@@ -1,4 +1,7 @@
+using Dropbox.Api.Auth;
 using Dropbox.Api.Data;
+using Dropbox.Api.Data.Entities;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -14,6 +17,10 @@ builder.Services.AddDbContext<DropboxDbContext>(options =>
 
 builder.Services.AddHealthChecks()
     .AddDbContextCheck<DropboxDbContext>();
+
+builder.Services.Configure<JwtOptions>(builder.Configuration.GetSection("Jwt"));
+builder.Services.AddSingleton<PasswordHasher<User>>();
+builder.Services.AddSingleton<JwtTokenService>();
 
 var app = builder.Build();
 
