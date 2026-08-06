@@ -15,6 +15,7 @@ public class DropboxDbContext(DbContextOptions<DropboxDbContext> options) : DbCo
         modelBuilder.Entity<User>(entity =>
         {
             entity.Property(u => u.Email).IsRequired().HasMaxLength(320); // RFC 5321 max
+            entity.Property(u => u.PasswordHash).IsRequired().HasMaxLength(255); // PasswordHasher<T> output, generously sized
             entity.HasIndex(u => u.Email).IsUnique();
         });
 
