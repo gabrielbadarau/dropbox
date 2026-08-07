@@ -237,4 +237,52 @@ public class FilesController(
 
         return Ok();
     }
+
+    [HttpPost("{id}/complete")]
+    public async Task<IActionResult> CompleteMultipartUpload(Guid id)
+    {
+        var callerId = Guid.Parse(User.FindFirstValue(JwtRegisteredClaimNames.Sub)!);
+
+        var file = await db.Files.Include(f => f.Chunks).FirstOrDefaultAsync(f => f.Id == id);
+        if (file is null || file.OwnerId != callerId)
+        {
+            return NotFound();
+        }
+
+        if (file.UploadId is null)
+        {
+            return BadRequest("File is not a multipart upload.");
+        }
+
+        // Idempotent: a repeated completion call on an already-completed
+        // upload succeeds without re-calling S3 (its UploadId is no longer
+        // valid once completed).
+        if (file.Status == FileStatus.Uploaded)
+        {
+            return Ok();
+        }
+
+        if (file.Chunks.Any(c => c.Status != ChunkStatus.Uploaded))
+        {
+            return Conflict("Not all parts have been uploaded yet.");
+        }
+
+        await s3Client.CompleteMultipartUploadAsync(new CompleteMultipartUploadRequest
+        {
+            BucketName = _storageOptions.BucketName,
+            Key = file.Id.ToString(),
+            UploadId = file.UploadId,
+            PartETags = file.Chunks
+                .OrderBy(c => c.Index)
+                .Select(c => new PartETag(c.Index, c.ETag))
+                .ToList(),
+        });
+
+        // Only mark Uploaded after S3 has confirmed the assembly succeeded.
+        file.Status = FileStatus.Uploaded;
+        file.UpdatedAt = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync();
+
+        return Ok();
+    }
 }
