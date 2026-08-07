@@ -11,3 +11,5 @@ public record MultipartUploadRequest(string Name, long Size, string? MimeType, s
 public record PartUploadInfo(int PartNumber, string? Url, bool AlreadyUploaded);
 
 public record MultipartUploadResponse(Guid FileId, string UploadId, List<PartUploadInfo> Parts);
+
+public record ChunkUploadReport(string ETag);

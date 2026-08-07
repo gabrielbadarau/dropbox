@@ -193,4 +193,48 @@ public class FilesController(
 
         return Ok(new MultipartUploadResponse(file.Id, file.UploadId!, parts));
     }
+
+    [HttpPatch("{id}/chunks/{index}")]
+    public async Task<IActionResult> ReportChunkUploaded(Guid id, int index, ChunkUploadReport request)
+    {
+        var callerId = Guid.Parse(User.FindFirstValue(JwtRegisteredClaimNames.Sub)!);
+
+        var file = await db.Files.Include(f => f.Chunks).FirstOrDefaultAsync(f => f.Id == id);
+        if (file is null || file.OwnerId != callerId)
+        {
+            return NotFound();
+        }
+
+        if (file.UploadId is null)
+        {
+            return BadRequest("File is not a multipart upload.");
+        }
+
+        var chunk = file.Chunks.FirstOrDefault(c => c.Index == index);
+        if (chunk is null)
+        {
+            return NotFound();
+        }
+
+        // Trust but verify: confirm against S3's real ListParts response
+        // rather than just believing the client's claimed ETag.
+        var listPartsResponse = await s3Client.ListPartsAsync(new ListPartsRequest
+        {
+            BucketName = _storageOptions.BucketName,
+            Key = file.Id.ToString(),
+            UploadId = file.UploadId,
+        });
+
+        var actualPart = listPartsResponse.Parts.FirstOrDefault(p => p.PartNumber == index);
+        if (actualPart is null || actualPart.ETag != request.ETag)
+        {
+            return Conflict("Reported chunk does not match what storage actually has.");
+        }
+
+        chunk.Status = ChunkStatus.Uploaded;
+        chunk.ETag = actualPart.ETag;
+        await db.SaveChangesAsync();
+
+        return Ok();
+    }
 }
