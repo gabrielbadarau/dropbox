@@ -26,8 +26,10 @@ conversation this file originated from for the full process.
   - [x] Part 1: `User.PasswordHash` added via migration
   - [x] Part 2: `POST /auth/register`, `POST /auth/login` - password hashing, JWT issuance
   - [x] Part 3: JWT Bearer middleware enforced, `[Authorize] GET /auth/me`
-- [ ] **Step 4 - Upload flow (small files)**
-  - Presigned-URL pattern against MinIO, status transition uploading -> uploaded via MinIO event notification
+- [x] **Step 4 - Upload flow (small files)**
+  - [x] Part 1: `AWSSDK.S3` wired against MinIO, bucket bootstrap, `/health` extended with S3 connectivity check
+  - [x] Part 2: `POST /files/presigned-url` - creates `FileMetadata` (Status=Uploading), returns a presigned PUT URL
+  - [x] Part 3: MinIO webhook notification flips Status to Uploaded, with a shared-secret check against forged calls
 - [ ] **Step 5 - Download flow**
   - Presigned GET from MinIO
 - [ ] **Step 6 - Large file support (deep dive: chunked multipart upload)**
@@ -191,6 +193,54 @@ Each entry: what we chose, why, and (if applicable) what we reversed and why.
     control both the issuer and the consumer of these tokens and there's no
     reason to want the remapping.
 
+25. **`AWSSDK.S3` (the real AWS SDK), not a MinIO-specific client**, pointed
+    at MinIO's endpoint with `ForcePathStyle = true`. Direct consequence of
+    the Step 1 decision to keep real S3 mechanics via MinIO's API
+    compatibility, not an independent choice.
+
+26. **Object storage key = `FileMetadata.Id`**, not derived from the
+    user-supplied filename. Opaque, collision-proof by construction (it's
+    already a unique GUID), and keeps the human-readable name entirely out
+    of the storage layer - it only ever lives in Postgres.
+
+27. **`StorageOptions.FixPresignedUrlScheme` works around a confirmed
+    `AWSSDK.S3` v4 bug**: `GetPreSignedURLAsync` always returns an `https://`
+    URL, even with `AmazonS3Config.UseHttp = true` and a `http://`
+    `ServiceURL` - verified by inspecting `Config` at runtime and seeing both
+    values were correct, meaning the SDK's presigned-URL builder itself
+    ignores them. Safe to rewrite the scheme after the fact because SigV4
+    presigned URLs only sign the `Host` header (`X-Amz-SignedHeaders=host`),
+    not the scheme - confirmed by a real `PUT` succeeding against the
+    rewritten URL.
+
+28. **MinIO's webhook target is configured server-side via docker-compose
+    env vars, but the bucket's event *subscription* to it is done in app
+    startup code** (`PutBucketNotificationAsync`, idempotent, same pattern as
+    the bucket bootstrap), not via a manual `mc event add` step. Nothing
+    about this setup depends on a command someone has to remember to rerun.
+
+29. **The storage webhook endpoint is not `[Authorize]`** - MinIO doesn't
+    present a JWT, it presents its own configured auth token. Checked
+    manually against `Storage:WebhookSecret`. This is a correctness
+    requirement, not speculative hardening: without it, anyone who can reach
+    the API could spoof an "upload complete" notification without uploading
+    real bytes, making the `Status` field meaningless. Verified directly -
+    a forged call with no/wrong auth is rejected and leaves the target file's
+    status unchanged.
+
+30. **Removed an `extra_hosts: host.docker.internal:host-gateway` override**
+    added to the `minio` service under the assumption it would make
+    `host.docker.internal` resolution more portable across Docker setups. It
+    actually broke delivery on this Rancher Desktop setup - MinIO's own logs
+    showed it dialing a raw IP (`172.17.0.1`) and getting connection refused,
+    overriding Rancher Desktop's own working built-in resolution. Removed
+    entirely rather than chasing the "more correct" version of the override.
+
+31. **MinIO sends its configured webhook auth token as `Bearer <token>`** in
+    the `Authorization` header, not the raw token value. Confirmed via
+    temporary runtime debug logging of the actual received header, not
+    assumed from memory of how the feature "should" work.
+
 ## Known limitations
 
 Deliberate, documented gaps - not oversights.
@@ -224,6 +274,18 @@ Deliberate, documented gaps - not oversights.
   the second insert would fail - but the caller would get an unhandled
   `DbUpdateException` instead of a clean `409`. Not fixed: very low odds at
   this project's scale, not worth the extra handling yet.
+- **No reconciliation between declared and actual upload size.**
+  `POST /files/presigned-url` accepts a client-declared `Size`, but nothing
+  checks that the object actually uploaded to MinIO matches it (e.g. via a
+  `HeadObject` call in the webhook handler). A client could declare one size
+  and upload different bytes. Trigger to revisit: before this data is used
+  for anything that assumes it's trustworthy (quotas, integrity checks).
+- **Webhook secret comparison is a plain string `==`, not constant-time.**
+  Theoretical timing side-channel, not a practical concern on a local single-
+  user project. Trigger to revisit: Step 9 security deep dive.
+- **`FileMetadata.Fingerprint` still unused.** The column exists (Step 2) but
+  nothing populates or checks it yet - no dedup, no resumability. That's
+  Step 6's job specifically.
 
 ## Local environment
 
