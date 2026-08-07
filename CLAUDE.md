@@ -30,8 +30,8 @@ conversation this file originated from for the full process.
   - [x] Part 1: `AWSSDK.S3` wired against MinIO, bucket bootstrap, `/health` extended with S3 connectivity check
   - [x] Part 2: `POST /files/presigned-url` - creates `FileMetadata` (Status=Uploading), returns a presigned PUT URL
   - [x] Part 3: MinIO webhook notification flips Status to Uploaded, with a shared-secret check against forged calls
-- [ ] **Step 5 - Download flow**
-  - Presigned GET from MinIO
+- [x] **Step 5 - Download flow**
+  - `GET /files/{id}/presigned-url` - presigned GET from MinIO, owner-only for now, 409 if not yet uploaded
 - [ ] **Step 6 - Large file support (deep dive: chunked multipart upload)**
   - Client-side chunking, fingerprinting, resumability, S3-style multipart upload against MinIO
 - [ ] **Step 7 - File sharing**
@@ -240,6 +240,19 @@ Each entry: what we chose, why, and (if applicable) what we reversed and why.
     the `Authorization` header, not the raw token value. Confirmed via
     temporary runtime debug logging of the actual received header, not
     assumed from memory of how the feature "should" work.
+
+32. **Download authorization returns `404` for both "file does not exist"
+    and "file exists but belongs to someone else."** Deliberate - returning
+    a distinct "403 Forbidden" would confirm to a non-owner that a given
+    file ID is real, leaking information the API has no reason to expose.
+
+33. **Separate expiry windows for upload vs. download presigned URLs**
+    (`PresignedUploadUrlExpiryMinutes` = 15, `PresignedDownloadUrlExpiryMinutes`
+    = 5), not one shared value. Follows the reference spec's own security
+    guidance directly: presigned URLs are bearer tokens usable by anyone
+    holding them until expiry, and downloads are meant to be consumed
+    immediately after being requested, so there's no reason to give a
+    download URL the same generous window an upload needs.
 
 ## Known limitations
 
