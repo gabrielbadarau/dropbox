@@ -32,8 +32,10 @@ conversation this file originated from for the full process.
   - [x] Part 3: MinIO webhook notification flips Status to Uploaded, with a shared-secret check against forged calls
 - [x] **Step 5 - Download flow**
   - `GET /files/{id}/presigned-url` - presigned GET from MinIO, owner-only for now, 409 if not yet uploaded
-- [ ] **Step 6 - Large file support (deep dive: chunked multipart upload)**
-  - Client-side chunking, fingerprinting, resumability, S3-style multipart upload against MinIO
+- [x] **Step 6 - Large file support (deep dive: chunked multipart upload)**
+  - [x] Part 1: `POST /files/multipart-upload` - initiate/resume via fingerprint match, `FileMetadata.UploadId`
+  - [x] Part 2: `PATCH /files/{id}/chunks/{index}` - trust-but-verify against S3's real `ListParts`
+  - [x] Part 3: `POST /files/{id}/complete` - `CompleteMultipartUpload`, Status flips only after S3 confirms
 - [ ] **Step 7 - File sharing**
   - `SharedFiles` join, share/list-shared-with-me endpoints
 - [ ] **Step 8 - Sync (change feed + real-time push)**
@@ -254,6 +256,40 @@ Each entry: what we chose, why, and (if applicable) what we reversed and why.
     immediately after being requested, so there's no reason to give a
     download URL the same generous window an upload needs.
 
+34. **Resumability via fingerprint, not full content-addressable
+    deduplication.** The reference spec's fingerprinting section mentions
+    both. Built: re-initiating a multipart upload with the same fingerprint
+    resumes the same in-progress upload, skipping already-uploaded chunks.
+    Not built: recognizing that a *fully completed* upload with this
+    fingerprint already exists (by anyone) and skipping the upload
+    entirely. That would require changing the storage key scheme from a
+    random GUID (decision #26) to a content hash - a bigger architectural
+    change than this step needs. Deliberate scope cut, not an oversight.
+
+35. **Two different mechanisms flip `FileMetadata.Status` to `Uploaded`,
+    for two different reasons.** The Step 4 small-file flow relies on
+    MinIO's webhook, because the client's direct `PUT` to storage has no
+    synchronous hook back into our backend. The Step 6 multipart flow does
+    not use the webhook at all - `POST /files/{id}/complete` calls S3's
+    `CompleteMultipartUpload` *from our own backend*, giving a direct,
+    synchronous answer, so `Status` is set in that same request. (Also
+    technically true because MinIO fires a distinct event name,
+    `s3:ObjectCreated:CompleteMultipartUpload`, which our bucket
+    notification config never subscribed to - it only subscribes to
+    `s3:ObjectCreated:Put`.)
+
+36. **`PATCH /files/{id}/chunks/{index}` verifies every reported chunk
+    against S3's real `ListParts` response** before trusting it - not just
+    "does a part exist for this number," but an exact `ETag` match.
+    Confirmed this is real verification, not decorative, by reporting a
+    chunk that was never actually uploaded (rejected) and reporting a real
+    uploaded chunk with a deliberately wrong `ETag` (also rejected).
+
+37. **`POST /files/{id}/complete` is idempotent** - calling it again after
+    the upload already completed returns `200` without re-calling S3,
+    since a multipart upload's `UploadId` becomes invalid once completed
+    and a second real completion call would fail.
+
 ## Known limitations
 
 Deliberate, documented gaps - not oversights.
@@ -296,9 +332,15 @@ Deliberate, documented gaps - not oversights.
 - **Webhook secret comparison is a plain string `==`, not constant-time.**
   Theoretical timing side-channel, not a practical concern on a local single-
   user project. Trigger to revisit: Step 9 security deep dive.
-- **`FileMetadata.Fingerprint` still unused.** The column exists (Step 2) but
-  nothing populates or checks it yet - no dedup, no resumability. That's
-  Step 6's job specifically.
+- **`FileMetadata.Fingerprint` now used for resumability (Step 6)**, but not
+  for deduplication - see decision #34.
+- **No cleanup for abandoned multipart uploads.** If a client initiates a
+  multipart upload and never finishes or resumes it, the `FileMetadata`
+  row, `Chunk` rows, and the underlying S3/MinIO multipart upload (and any
+  parts already sent) all sit around indefinitely. Real S3 has bucket
+  lifecycle rules for auto-aborting stale multipart uploads; nothing
+  equivalent is configured here. Trigger to revisit: if disk usage from
+  abandoned uploads ever becomes a real problem at this project's scale.
 
 ## Local environment
 
