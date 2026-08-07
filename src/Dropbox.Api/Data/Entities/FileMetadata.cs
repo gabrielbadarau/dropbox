@@ -13,6 +13,11 @@ public class FileMetadata
     public User? Owner { get; set; }
     public FileStatus Status { get; set; } = FileStatus.Uploading;
     public string? Fingerprint { get; set; }
+
+    // Set only for chunked multipart uploads (Step 6) - S3/MinIO's opaque
+    // handle identifying an in-progress multipart upload. Null for the
+    // Step 4 small-file single-PUT flow.
+    public string? UploadId { get; set; }
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
 

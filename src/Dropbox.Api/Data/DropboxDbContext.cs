@@ -24,6 +24,9 @@ public class DropboxDbContext(DbContextOptions<DropboxDbContext> options) : DbCo
             entity.Property(f => f.Name).IsRequired().HasMaxLength(255);
             entity.Property(f => f.MimeType).HasMaxLength(255);
             entity.Property(f => f.Fingerprint).HasMaxLength(128);
+            entity.Property(f => f.UploadId).HasMaxLength(512);
+
+            entity.HasIndex(f => f.Fingerprint); // resumability lookups: find an in-progress upload by fingerprint
 
             // Stored as text (e.g. "Uploading"), not the default int, so the
             // column is readable directly in psql without a lookup table.
