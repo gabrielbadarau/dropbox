@@ -1,10 +1,14 @@
 using System.Text;
+using Amazon.S3;
+using Amazon.S3.Util;
 using Dropbox.Api.Auth;
 using Dropbox.Api.Data;
 using Dropbox.Api.Data.Entities;
+using Dropbox.Api.Storage;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -18,8 +22,21 @@ builder.Services.AddOpenApi();
 builder.Services.AddDbContext<DropboxDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("Default")));
 
+builder.Services.Configure<StorageOptions>(builder.Configuration.GetSection("Storage"));
+
+builder.Services.AddSingleton<IAmazonS3>(sp =>
+{
+    var options = sp.GetRequiredService<IOptions<StorageOptions>>().Value;
+    return new AmazonS3Client(options.AccessKey, options.SecretKey, new AmazonS3Config
+    {
+        ServiceURL = options.ServiceUrl,
+        ForcePathStyle = true, // MinIO requires path-style addressing (endpoint/bucket/key), not virtual-hosted-style (bucket.endpoint/key)
+    });
+});
+
 builder.Services.AddHealthChecks()
-    .AddDbContextCheck<DropboxDbContext>();
+    .AddDbContextCheck<DropboxDbContext>()
+    .AddCheck<S3HealthCheck>("s3");
 
 builder.Services.Configure<JwtOptions>(builder.Configuration.GetSection("Jwt"));
 builder.Services.AddSingleton<PasswordHasher<User>>();
@@ -51,6 +68,14 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
 builder.Services.AddAuthorization();
 
 var app = builder.Build();
+
+// Ensure the storage bucket exists before serving any requests.
+var s3Client = app.Services.GetRequiredService<IAmazonS3>();
+var storageOptions = app.Services.GetRequiredService<IOptions<StorageOptions>>().Value;
+if (!await AmazonS3Util.DoesS3BucketExistV2Async(s3Client, storageOptions.BucketName))
+{
+    await s3Client.PutBucketAsync(storageOptions.BucketName);
+}
 
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
