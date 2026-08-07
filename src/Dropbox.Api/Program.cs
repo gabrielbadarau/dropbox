@@ -1,5 +1,6 @@
 using System.Text;
 using Amazon.S3;
+using Amazon.S3.Model;
 using Amazon.S3.Util;
 using Dropbox.Api.Auth;
 using Dropbox.Api.Data;
@@ -31,6 +32,7 @@ builder.Services.AddSingleton<IAmazonS3>(sp =>
     {
         ServiceURL = options.ServiceUrl,
         ForcePathStyle = true, // MinIO requires path-style addressing (endpoint/bucket/key), not virtual-hosted-style (bucket.endpoint/key)
+        UseHttp = true, // ServiceURL's "http://" scheme alone isn't honored for presigned URL generation; MinIO here has no TLS configured
     });
 });
 
