@@ -7,7 +7,13 @@ public class StorageOptions
     public required string SecretKey { get; set; }
     public required string BucketName { get; set; }
     public required string WebhookSecret { get; set; }
-    public int PresignedUrlExpiryMinutes { get; set; } = 15;
+    public int PresignedUploadUrlExpiryMinutes { get; set; } = 15;
+
+    // Shorter than the upload expiry: download URLs are meant to be
+    // consumed immediately, and per the reference spec's security guidance,
+    // presigned URLs are bearer tokens - anyone holding one can use it
+    // before it expires, so shorter is safer here.
+    public int PresignedDownloadUrlExpiryMinutes { get; set; } = 5;
 
     // Workaround for a confirmed AWSSDK.S3 v4 quirk: GetPreSignedURLAsync
     // always returns an https:// URL, even with AmazonS3Config.UseHttp = true

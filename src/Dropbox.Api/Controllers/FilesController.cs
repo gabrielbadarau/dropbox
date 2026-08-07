@@ -8,6 +8,7 @@ using Dropbox.Api.Data.Entities;
 using Dropbox.Api.Storage;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
 namespace Dropbox.Api.Controllers;
@@ -49,7 +50,7 @@ public class FilesController(
         db.Files.Add(file);
         await db.SaveChangesAsync();
 
-        var expiresAt = DateTimeOffset.UtcNow.AddMinutes(_storageOptions.PresignedUrlExpiryMinutes);
+        var expiresAt = DateTimeOffset.UtcNow.AddMinutes(_storageOptions.PresignedUploadUrlExpiryMinutes);
 
         var uploadUrl = await s3Client.GetPreSignedURLAsync(new GetPreSignedUrlRequest
         {
@@ -61,5 +62,38 @@ public class FilesController(
         uploadUrl = _storageOptions.FixPresignedUrlScheme(uploadUrl);
 
         return Ok(new PresignedUrlResponse(file.Id, uploadUrl, expiresAt));
+    }
+
+    [HttpGet("{id}/presigned-url")]
+    public async Task<ActionResult<DownloadUrlResponse>> CreatePresignedDownloadUrl(Guid id)
+    {
+        var callerId = Guid.Parse(User.FindFirstValue(JwtRegisteredClaimNames.Sub)!);
+
+        var file = await db.Files.FirstOrDefaultAsync(f => f.Id == id);
+
+        // 404 for both "doesn't exist" and "exists but isn't yours" - don't
+        // leak existence of other users' files to a non-owner.
+        if (file is null || file.OwnerId != callerId)
+        {
+            return NotFound();
+        }
+
+        if (file.Status != FileStatus.Uploaded)
+        {
+            return Conflict("File has not finished uploading yet.");
+        }
+
+        var expiresAt = DateTimeOffset.UtcNow.AddMinutes(_storageOptions.PresignedDownloadUrlExpiryMinutes);
+
+        var downloadUrl = await s3Client.GetPreSignedURLAsync(new GetPreSignedUrlRequest
+        {
+            BucketName = _storageOptions.BucketName,
+            Key = file.Id.ToString(),
+            Verb = HttpVerb.GET,
+            Expires = expiresAt.UtcDateTime,
+        });
+        downloadUrl = _storageOptions.FixPresignedUrlScheme(downloadUrl);
+
+        return Ok(new DownloadUrlResponse(downloadUrl, expiresAt, file.Name, file.MimeType));
     }
 }
