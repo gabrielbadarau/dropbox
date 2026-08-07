@@ -6,6 +6,7 @@ public class StorageOptions
     public required string AccessKey { get; set; }
     public required string SecretKey { get; set; }
     public required string BucketName { get; set; }
+    public required string WebhookSecret { get; set; }
     public int PresignedUrlExpiryMinutes { get; set; } = 15;
 
     // Workaround for a confirmed AWSSDK.S3 v4 quirk: GetPreSignedURLAsync

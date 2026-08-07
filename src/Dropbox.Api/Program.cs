@@ -79,6 +79,27 @@ if (!await AmazonS3Util.DoesS3BucketExistV2Async(s3Client, storageOptions.Bucket
     await s3Client.PutBucketAsync(storageOptions.BucketName);
 }
 
+// Ensure the bucket is subscribed to ObjectCreated events on the "DROPBOX"
+// webhook target configured on the MinIO server (docker-compose.yml's
+// MINIO_NOTIFY_WEBHOOK_*_DROPBOX env vars). Idempotent, same pattern as the
+// bucket bootstrap above - no manual "mc event add" step to remember.
+const string webhookQueueArn = "arn:minio:sqs::DROPBOX:webhook";
+var notificationConfig = await s3Client.GetBucketNotificationAsync(storageOptions.BucketName);
+if (!notificationConfig.QueueConfigurations.Any(q => q.Queue == webhookQueueArn))
+{
+    notificationConfig.QueueConfigurations.Add(new QueueConfiguration
+    {
+        Id = "dropbox-upload-complete",
+        Queue = webhookQueueArn,
+        Events = [EventType.ObjectCreatedPut],
+    });
+    await s3Client.PutBucketNotificationAsync(new PutBucketNotificationRequest
+    {
+        BucketName = storageOptions.BucketName,
+        QueueConfigurations = notificationConfig.QueueConfigurations,
+    });
+}
+
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
 {
