@@ -9,6 +9,7 @@ public class DropboxDbContext(DbContextOptions<DropboxDbContext> options) : DbCo
     public DbSet<FileMetadata> Files => Set<FileMetadata>();
     public DbSet<Chunk> Chunks => Set<Chunk>();
     public DbSet<SharedFile> SharedFiles => Set<SharedFile>();
+    public DbSet<ChangeEvent> ChangeEvents => Set<ChangeEvent>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -67,6 +68,24 @@ public class DropboxDbContext(DbContextOptions<DropboxDbContext> options) : DbCo
                 .WithMany(f => f.SharedWith)
                 .HasForeignKey(s => s.FileId)
                 .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<ChangeEvent>(entity =>
+        {
+            entity.Property(e => e.FileName).IsRequired().HasMaxLength(255);
+            entity.Property(e => e.Type).HasConversion<string>().HasMaxLength(20);
+
+            // FileId is intentionally not configured as a relationship here -
+            // no HasOne/HasForeignKey to FileMetadata. It stays a plain
+            // column so a Deleted event can still be read after the file
+            // row it refers to is gone.
+            entity.HasOne(e => e.User)
+                .WithMany()
+                .HasForeignKey(e => e.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            // The polling query's access pattern: this user's events, newest first.
+            entity.HasIndex(e => new { e.UserId, e.OccurredAt });
         });
     }
 }

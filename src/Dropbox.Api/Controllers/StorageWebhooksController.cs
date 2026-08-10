@@ -2,6 +2,7 @@ using Dropbox.Api.Contracts;
 using Dropbox.Api.Data;
 using Dropbox.Api.Data.Entities;
 using Dropbox.Api.Storage;
+using Dropbox.Api.Sync;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -14,7 +15,8 @@ namespace Dropbox.Api.Controllers;
 [Route("webhooks")]
 public class StorageWebhooksController(
     DropboxDbContext db,
-    IOptions<StorageOptions> storageOptions) : ControllerBase
+    IOptions<StorageOptions> storageOptions,
+    ChangeEventRecorder changeEvents) : ControllerBase
 {
     private readonly StorageOptions _storageOptions = storageOptions.Value;
 
@@ -46,6 +48,7 @@ public class StorageWebhooksController(
             {
                 file.Status = FileStatus.Uploaded;
                 file.UpdatedAt = DateTimeOffset.UtcNow;
+                changeEvents.Record(file.OwnerId, file.Id, file.Name, ChangeType.Uploaded);
             }
         }
 

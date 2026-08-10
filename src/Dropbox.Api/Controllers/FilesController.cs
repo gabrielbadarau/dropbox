@@ -6,6 +6,7 @@ using Dropbox.Api.Contracts;
 using Dropbox.Api.Data;
 using Dropbox.Api.Data.Entities;
 using Dropbox.Api.Storage;
+using Dropbox.Api.Sync;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -19,7 +20,8 @@ namespace Dropbox.Api.Controllers;
 public class FilesController(
     DropboxDbContext db,
     IAmazonS3 s3Client,
-    IOptions<StorageOptions> storageOptions) : ControllerBase
+    IOptions<StorageOptions> storageOptions,
+    ChangeEventRecorder changeEvents) : ControllerBase
 {
     private readonly StorageOptions _storageOptions = storageOptions.Value;
 
@@ -48,6 +50,7 @@ public class FilesController(
         };
 
         db.Files.Add(file);
+        changeEvents.Record(ownerId, file.Id, file.Name, ChangeType.Created);
         await db.SaveChangesAsync();
 
         var expiresAt = DateTimeOffset.UtcNow.AddMinutes(_storageOptions.PresignedUploadUrlExpiryMinutes);
@@ -171,6 +174,7 @@ public class FilesController(
             }
 
             db.Files.Add(file);
+            changeEvents.Record(ownerId, file.Id, file.Name, ChangeType.Created);
             await db.SaveChangesAsync();
         }
 
@@ -289,6 +293,7 @@ public class FilesController(
         // Only mark Uploaded after S3 has confirmed the assembly succeeded.
         file.Status = FileStatus.Uploaded;
         file.UpdatedAt = DateTimeOffset.UtcNow;
+        changeEvents.Record(file.OwnerId, file.Id, file.Name, ChangeType.Uploaded);
         await db.SaveChangesAsync();
 
         return Ok();
@@ -340,6 +345,7 @@ public class FilesController(
             }
 
             db.SharedFiles.Add(new SharedFile { FileId = id, UserId = recipient.Id });
+            changeEvents.Record(recipient.Id, file.Id, file.Name, ChangeType.Shared);
             results.Add(new ShareResult(email, true, "Shared."));
         }
 
@@ -367,5 +373,55 @@ public class FilesController(
             .ToListAsync();
 
         return Ok(shared);
+    }
+
+    [HttpDelete("{id}")]
+    public async Task<IActionResult> DeleteFile(Guid id)
+    {
+        var ownerId = Guid.Parse(User.FindFirstValue(JwtRegisteredClaimNames.Sub)!);
+
+        var file = await db.Files.FirstOrDefaultAsync(f => f.Id == id);
+        if (file is null || file.OwnerId != ownerId)
+        {
+            return NotFound();
+        }
+
+        // Best-effort storage cleanup: prioritize the DB row actually
+        // disappearing over a perfectly clean bucket. A failure here is a
+        // known, accepted storage-leak risk, not silently swallowed - it's
+        // just not allowed to block the delete itself.
+        try
+        {
+            if (file.UploadId is not null && file.Status == FileStatus.Uploading)
+            {
+                await s3Client.AbortMultipartUploadAsync(_storageOptions.BucketName, file.Id.ToString(), file.UploadId);
+            }
+            else
+            {
+                await s3Client.DeleteObjectAsync(_storageOptions.BucketName, file.Id.ToString());
+            }
+        }
+        catch (AmazonS3Exception)
+        {
+        }
+
+        // Capture who currently has access BEFORE the cascade delete below
+        // removes those SharedFiles rows - this is the only chance to know
+        // who needs a Deleted event.
+        var sharedWithUserIds = await db.SharedFiles
+            .Where(s => s.FileId == id)
+            .Select(s => s.UserId)
+            .ToListAsync();
+
+        changeEvents.Record(ownerId, file.Id, file.Name, ChangeType.Deleted);
+        foreach (var userId in sharedWithUserIds)
+        {
+            changeEvents.Record(userId, file.Id, file.Name, ChangeType.Deleted);
+        }
+
+        db.Files.Remove(file);
+        await db.SaveChangesAsync();
+
+        return NoContent();
     }
 }

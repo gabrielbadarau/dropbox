@@ -6,6 +6,7 @@ using Dropbox.Api.Auth;
 using Dropbox.Api.Data;
 using Dropbox.Api.Data.Entities;
 using Dropbox.Api.Storage;
+using Dropbox.Api.Sync;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
@@ -22,6 +23,8 @@ builder.Services.AddOpenApi();
 
 builder.Services.AddDbContext<DropboxDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("Default")));
+
+builder.Services.AddScoped<ChangeEventRecorder>();
 
 builder.Services.Configure<StorageOptions>(builder.Configuration.GetSection("Storage"));
 
