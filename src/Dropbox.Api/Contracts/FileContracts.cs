@@ -13,3 +13,9 @@ public record PartUploadInfo(int PartNumber, string? Url, bool AlreadyUploaded);
 public record MultipartUploadResponse(Guid FileId, string UploadId, List<PartUploadInfo> Parts);
 
 public record ChunkUploadReport(string ETag);
+
+public record ShareFileRequest(List<string> Emails);
+
+public record ShareResult(string Email, bool Success, string Reason);
+
+public record ShareFileResponse(List<ShareResult> Results);

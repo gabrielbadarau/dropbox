@@ -70,10 +70,18 @@ public class FilesController(
         var callerId = Guid.Parse(User.FindFirstValue(JwtRegisteredClaimNames.Sub)!);
 
         var file = await db.Files.FirstOrDefaultAsync(f => f.Id == id);
+        if (file is null)
+        {
+            return NotFound();
+        }
 
-        // 404 for both "doesn't exist" and "exists but isn't yours" - don't
-        // leak existence of other users' files to a non-owner.
-        if (file is null || file.OwnerId != callerId)
+        // Allowed: the owner, or anyone the file has been shared with.
+        // 404 for everything else - don't leak existence of other users'
+        // files to someone with no access.
+        var hasAccess = file.OwnerId == callerId
+            || await db.SharedFiles.AnyAsync(s => s.FileId == id && s.UserId == callerId);
+
+        if (!hasAccess)
         {
             return NotFound();
         }
@@ -284,5 +292,59 @@ public class FilesController(
         await db.SaveChangesAsync();
 
         return Ok();
+    }
+
+    [HttpPost("{id}/share")]
+    public async Task<ActionResult<ShareFileResponse>> ShareFile(Guid id, ShareFileRequest request)
+    {
+        var ownerId = Guid.Parse(User.FindFirstValue(JwtRegisteredClaimNames.Sub)!);
+
+        var file = await db.Files.FirstOrDefaultAsync(f => f.Id == id);
+        if (file is null || file.OwnerId != ownerId)
+        {
+            return NotFound();
+        }
+
+        if (file.Status != FileStatus.Uploaded)
+        {
+            return Conflict("File has not finished uploading yet.");
+        }
+
+        if (request.Emails is null || request.Emails.Count == 0)
+        {
+            return BadRequest("At least one email is required.");
+        }
+
+        var results = new List<ShareResult>();
+
+        foreach (var email in request.Emails.Distinct())
+        {
+            var recipient = await db.Users.FirstOrDefaultAsync(u => u.Email == email);
+            if (recipient is null)
+            {
+                results.Add(new ShareResult(email, false, "No account with this email."));
+                continue;
+            }
+
+            if (recipient.Id == ownerId)
+            {
+                results.Add(new ShareResult(email, false, "Cannot share a file with its owner."));
+                continue;
+            }
+
+            var alreadyShared = await db.SharedFiles.AnyAsync(s => s.FileId == id && s.UserId == recipient.Id);
+            if (alreadyShared)
+            {
+                results.Add(new ShareResult(email, true, "Already shared."));
+                continue;
+            }
+
+            db.SharedFiles.Add(new SharedFile { FileId = id, UserId = recipient.Id });
+            results.Add(new ShareResult(email, true, "Shared."));
+        }
+
+        await db.SaveChangesAsync();
+
+        return Ok(new ShareFileResponse(results));
     }
 }
