@@ -36,8 +36,9 @@ conversation this file originated from for the full process.
   - [x] Part 1: `POST /files/multipart-upload` - initiate/resume via fingerprint match, `FileMetadata.UploadId`
   - [x] Part 2: `PATCH /files/{id}/chunks/{index}` - trust-but-verify against S3's real `ListParts`
   - [x] Part 3: `POST /files/{id}/complete` - `CompleteMultipartUpload`, Status flips only after S3 confirms
-- [ ] **Step 7 - File sharing**
-  - `SharedFiles` join, share/list-shared-with-me endpoints
+- [x] **Step 7 - File sharing**
+  - [x] Part 1: `POST /files/{id}/share` (per-email results), download access extended to shared users
+  - [x] Part 2: `GET /files/shared-with-me`
 - [ ] **Step 8 - Sync (change feed + real-time push)**
   - `GET /files/changes?since=` polling fallback, SignalR for push
 - [ ] **Step 9 - Security deep dive**
@@ -290,6 +291,21 @@ Each entry: what we chose, why, and (if applicable) what we reversed and why.
     since a multipart upload's `UploadId` becomes invalid once completed
     and a second real completion call would fail.
 
+38. **`POST /files/{id}/share` reports per-email results rather than
+    succeeding or failing as a whole.** Sharing with three people where
+    one email has no account is a realistic case, not an edge case - the
+    caller needs to know *which* emails worked, not get one opaque
+    failure for the whole request. Sharing with the owner's own email,
+    and re-sharing with someone already shared, are both reported as
+    named outcomes rather than silently ignored or erroring.
+
+39. **`GET /files/{id}/presigned-url`'s access check now allows the owner
+    or anyone with a `SharedFiles` row** - this was flagged as planned
+    back in Step 5 (decision #32), not a new decision made here. Fixed a
+    real nullable-reference compiler warning (`CS8602`) this introduced by
+    restructuring the null check and the access check into two separate
+    steps, rather than suppressing the warning.
+
 ## Known limitations
 
 Deliberate, documented gaps - not oversights.
@@ -341,6 +357,16 @@ Deliberate, documented gaps - not oversights.
   lifecycle rules for auto-aborting stale multipart uploads; nothing
   equivalent is configured here. Trigger to revisit: if disk usage from
   abandoned uploads ever becomes a real problem at this project's scale.
+- **No unshare/revoke endpoint.** A `SharedFile` row, once created, can
+  only be removed directly in the database. Not in the original Step 7
+  scope; straightforward to add later (`DELETE /files/{id}/share/{userId}`)
+  when actually needed.
+- **No "list my own files" endpoint.** We've only ever interacted with
+  files by the exact ID returned at creation/initiation time - there is
+  no way to ask "what files do I own" through the API. Not in the
+  original Step 7 scope (which was specifically about sharing); a real
+  gap once a client (Step 11) needs to render something like a file
+  browser.
 
 ## Local environment
 
