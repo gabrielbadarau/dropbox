@@ -424,4 +424,19 @@ public class FilesController(
 
         return NoContent();
     }
+
+    [HttpGet("changes")]
+    public async Task<ActionResult<List<ChangeEventSummary>>> GetChanges([FromQuery] DateTimeOffset? since)
+    {
+        var callerId = Guid.Parse(User.FindFirstValue(JwtRegisteredClaimNames.Sub)!);
+        var sinceValue = since ?? DateTimeOffset.MinValue;
+
+        var changes = await db.ChangeEvents
+            .Where(e => e.UserId == callerId && e.OccurredAt > sinceValue)
+            .OrderBy(e => e.OccurredAt)
+            .Select(e => new ChangeEventSummary(e.FileId, e.FileName, e.Type, e.OccurredAt))
+            .ToListAsync();
+
+        return Ok(changes);
+    }
 }

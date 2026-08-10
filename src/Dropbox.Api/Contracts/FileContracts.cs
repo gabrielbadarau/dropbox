@@ -1,3 +1,5 @@
+using Dropbox.Api.Data.Entities;
+
 namespace Dropbox.Api.Contracts;
 
 public record PresignedUrlRequest(string Name, long Size, string? MimeType);
@@ -21,3 +23,5 @@ public record ShareResult(string Email, bool Success, string Reason);
 public record ShareFileResponse(List<ShareResult> Results);
 
 public record SharedFileSummary(Guid FileId, string Name, long Size, string? MimeType, Guid OwnerId, DateTimeOffset SharedAt);
+
+public record ChangeEventSummary(Guid FileId, string FileName, ChangeType Type, DateTimeOffset OccurredAt);
