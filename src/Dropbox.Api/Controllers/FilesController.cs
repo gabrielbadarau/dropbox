@@ -52,6 +52,7 @@ public class FilesController(
         db.Files.Add(file);
         changeEvents.Record(ownerId, file.Id, file.Name, ChangeType.Created);
         await db.SaveChangesAsync();
+        await changeEvents.PublishPendingAsync();
 
         var expiresAt = DateTimeOffset.UtcNow.AddMinutes(_storageOptions.PresignedUploadUrlExpiryMinutes);
 
@@ -176,6 +177,7 @@ public class FilesController(
             db.Files.Add(file);
             changeEvents.Record(ownerId, file.Id, file.Name, ChangeType.Created);
             await db.SaveChangesAsync();
+            await changeEvents.PublishPendingAsync();
         }
 
         var expiresAt = DateTime.UtcNow.AddMinutes(_storageOptions.PresignedUploadUrlExpiryMinutes);
@@ -295,6 +297,7 @@ public class FilesController(
         file.UpdatedAt = DateTimeOffset.UtcNow;
         changeEvents.Record(file.OwnerId, file.Id, file.Name, ChangeType.Uploaded);
         await db.SaveChangesAsync();
+        await changeEvents.PublishPendingAsync();
 
         return Ok();
     }
@@ -350,6 +353,7 @@ public class FilesController(
         }
 
         await db.SaveChangesAsync();
+        await changeEvents.PublishPendingAsync();
 
         return Ok(new ShareFileResponse(results));
     }
@@ -421,6 +425,7 @@ public class FilesController(
 
         db.Files.Remove(file);
         await db.SaveChangesAsync();
+        await changeEvents.PublishPendingAsync();
 
         return NoContent();
     }

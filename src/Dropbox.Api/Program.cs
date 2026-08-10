@@ -14,6 +14,8 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 
+const string changesHubPath = "/hubs/changes";
+
 var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container.
@@ -30,6 +32,14 @@ builder.Services.AddDbContext<DropboxDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("Default")));
 
 builder.Services.AddScoped<ChangeEventRecorder>();
+builder.Services.AddSignalR()
+    // SignalR's JSON Hub Protocol has its own separate serializer options -
+    // does not inherit the AddControllers().AddJsonOptions() converter
+    // above. Without this, ChangeType pushed over the hub serializes as
+    // its numeric value (0) while the same enum in a REST response
+    // serializes as "Created" - confirmed by a real push arriving as
+    // "type":0 before this was added.
+    .AddJsonProtocol(options => options.PayloadSerializerOptions.Converters.Add(new JsonStringEnumConverter()));
 
 builder.Services.Configure<StorageOptions>(builder.Configuration.GetSection("Storage"));
 
@@ -72,6 +82,26 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             ValidateLifetime = true,
             ValidateIssuerSigningKey = true,
             IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtOptions.SigningKey)),
+        };
+
+        // SignalR clients cannot always set a custom Authorization header on
+        // the WebSocket handshake (browsers can't at all). The documented
+        // ASP.NET Core pattern is to accept the token from the query string
+        // instead, but only for requests actually hitting the hub - never
+        // as a general fallback for ordinary API calls.
+        options.Events = new JwtBearerEvents
+        {
+            OnMessageReceived = context =>
+            {
+                var accessToken = context.Request.Query["access_token"];
+                if (!string.IsNullOrEmpty(accessToken)
+                    && context.HttpContext.Request.Path.StartsWithSegments(changesHubPath))
+                {
+                    context.Token = accessToken;
+                }
+
+                return Task.CompletedTask;
+            },
         };
     });
 
@@ -121,5 +151,6 @@ app.UseAuthorization();
 
 app.MapControllers();
 app.MapHealthChecks("/health");
+app.MapHub<ChangesHub>(changesHubPath);
 
 app.Run();

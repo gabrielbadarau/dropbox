@@ -53,6 +53,7 @@ public class StorageWebhooksController(
         }
 
         await db.SaveChangesAsync();
+        await changeEvents.PublishPendingAsync();
         return Ok();
     }
 }
