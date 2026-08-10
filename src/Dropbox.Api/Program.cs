@@ -124,6 +124,19 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
 
 builder.Services.AddAuthorization();
 
+// The React client is served from a different origin than the API
+// (different port at minimum), so the browser enforces CORS on every
+// call - including the SignalR hub's negotiate request. Presigned URLs
+// point straight at MinIO, a third origin, which needs its own CORS
+// config instead (bucket bootstrap, below).
+const string corsPolicyName = "client";
+var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? [];
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy(corsPolicyName, policy =>
+        policy.WithOrigins(allowedOrigins).AllowAnyHeader().AllowAnyMethod());
+});
+
 var app = builder.Build();
 
 // Ensure the storage bucket exists before serving any requests.
@@ -155,6 +168,15 @@ if (!notificationConfig.QueueConfigurations.Any(q => q.Queue == webhookQueueArn)
     });
 }
 
+// No bucket CORS configuration needed for MinIO: confirmed empirically
+// that it already answers preflight requests correctly for object-level
+// operations (GET/PUT against a presigned URL) with zero configuration -
+// reflects the Origin, echoes the requested method/headers. Attempting
+// PutCORSConfigurationAsync here actually crashed startup: MinIO returned
+// "NotImplemented" for that specific S3 API call (confirmed independently
+// via `mc cors set` failing with the identical error), even though object
+// requests were never blocked in the first place.
+
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
 {
@@ -163,6 +185,7 @@ if (app.Environment.IsDevelopment())
 
 app.UseHttpsRedirection();
 
+app.UseCors(corsPolicyName);
 app.UseAuthentication();
 app.UseAuthorization();
 
