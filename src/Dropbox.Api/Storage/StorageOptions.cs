@@ -2,7 +2,23 @@ namespace Dropbox.Api.Storage;
 
 public class StorageOptions
 {
+    // Used for the API's own direct S3 calls (InitiateMultipartUpload,
+    // ListParts, CompleteMultipartUpload, bucket bootstrap, etc.) - these
+    // are server-to-server, so the in-network hostname (e.g. "minio" in
+    // Docker) is correct.
     public required string ServiceUrl { get; set; }
+
+    // Used only when generating presigned URLs, which are handed to an
+    // external client (a browser) that cannot resolve Docker's internal
+    // service names. Equal to ServiceUrl when running via `dotnet run` on
+    // the host (everything is already on localhost); overridden to a
+    // host-reachable address when Dropbox.Api itself runs containerized.
+    // A separate AmazonS3Client, not a string swap on the generated URL:
+    // confirmed empirically that swapping the hostname alone breaks the
+    // SigV4 signature (X-Amz-SignedHeaders=host signs the literal Host
+    // header value, unlike the scheme - see FixPresignedUrlScheme).
+    public required string PublicServiceUrl { get; set; }
+
     public required string AccessKey { get; set; }
     public required string SecretKey { get; set; }
     public required string BucketName { get; set; }
@@ -24,7 +40,7 @@ public class StorageOptions
     // scheme here does not invalidate the signature - confirmed by a real
     // PUT succeeding against the rewritten URL.
     public string FixPresignedUrlScheme(string presignedUrl) =>
-        ServiceUrl.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
+        PublicServiceUrl.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
             ? presignedUrl.Replace("https://", "http://", StringComparison.OrdinalIgnoreCase)
             : presignedUrl;
 }

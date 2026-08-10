@@ -54,6 +54,23 @@ builder.Services.AddSingleton<IAmazonS3>(sp =>
     });
 });
 
+// Second client, used only for presigned URL generation. Confirmed
+// empirically (see StorageOptions.PublicServiceUrl) that a presigned URL
+// built with one hostname cannot simply have its hostname swapped for
+// another afterward - the signature breaks. When ServiceUrl and
+// PublicServiceUrl are the same value (host-run dev), this is just a
+// second client pointed at the same place.
+builder.Services.AddKeyedSingleton<IAmazonS3>("public", (sp, _) =>
+{
+    var options = sp.GetRequiredService<IOptions<StorageOptions>>().Value;
+    return new AmazonS3Client(options.AccessKey, options.SecretKey, new AmazonS3Config
+    {
+        ServiceURL = options.PublicServiceUrl,
+        ForcePathStyle = true,
+        UseHttp = true,
+    });
+});
+
 builder.Services.AddHealthChecks()
     .AddDbContextCheck<DropboxDbContext>()
     .AddCheck<S3HealthCheck>("s3");

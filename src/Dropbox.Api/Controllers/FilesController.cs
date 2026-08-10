@@ -20,6 +20,7 @@ namespace Dropbox.Api.Controllers;
 public class FilesController(
     DropboxDbContext db,
     IAmazonS3 s3Client,
+    [FromKeyedServices("public")] IAmazonS3 publicS3Client,
     IOptions<StorageOptions> storageOptions,
     ChangeEventRecorder changeEvents) : ControllerBase
 {
@@ -56,7 +57,7 @@ public class FilesController(
 
         var expiresAt = DateTimeOffset.UtcNow.AddMinutes(_storageOptions.PresignedUploadUrlExpiryMinutes);
 
-        var uploadUrl = await s3Client.GetPreSignedURLAsync(new GetPreSignedUrlRequest
+        var uploadUrl = await publicS3Client.GetPreSignedURLAsync(new GetPreSignedUrlRequest
         {
             BucketName = _storageOptions.BucketName,
             Key = file.Id.ToString(),
@@ -97,7 +98,7 @@ public class FilesController(
 
         var expiresAt = DateTimeOffset.UtcNow.AddMinutes(_storageOptions.PresignedDownloadUrlExpiryMinutes);
 
-        var downloadUrl = await s3Client.GetPreSignedURLAsync(new GetPreSignedUrlRequest
+        var downloadUrl = await publicS3Client.GetPreSignedURLAsync(new GetPreSignedUrlRequest
         {
             BucketName = _storageOptions.BucketName,
             Key = file.Id.ToString(),
@@ -191,7 +192,7 @@ public class FilesController(
                 continue;
             }
 
-            var partUrl = await s3Client.GetPreSignedURLAsync(new GetPreSignedUrlRequest
+            var partUrl = await publicS3Client.GetPreSignedURLAsync(new GetPreSignedUrlRequest
             {
                 BucketName = _storageOptions.BucketName,
                 Key = file.Id.ToString(),
