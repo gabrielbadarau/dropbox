@@ -39,8 +39,10 @@ conversation this file originated from for the full process.
 - [x] **Step 7 - File sharing**
   - [x] Part 1: `POST /files/{id}/share` (per-email results), download access extended to shared users
   - [x] Part 2: `GET /files/shared-with-me`
-- [ ] **Step 8 - Sync (change feed + real-time push)**
-  - `GET /files/changes?since=` polling fallback, SignalR for push
+- [x] **Step 8 - Sync (change feed + real-time push)**
+  - [x] Part 1: `ChangeEvent` append-only log, `DELETE /files/{id}`, wired into every mutation point
+  - [x] Part 2: `GET /files/changes?since=` polling endpoint
+  - [x] Part 3: SignalR `ChangesHub` for real-time push, alongside polling not replacing it
 - [ ] **Step 9 - Security deep dive**
   - HTTPS end to end, presigned URL expiry review, encryption-at-rest note
 - [ ] **Step 10 - Performance deep dive (stretch)**
@@ -306,6 +308,71 @@ Each entry: what we chose, why, and (if applicable) what we reversed and why.
     restructuring the null check and the access check into two separate
     steps, rather than suppressing the warning.
 
+40. **`ChangeEvent`: a dedicated append-only event log, not inferred from
+    existing timestamps** (`FileMetadata.UpdatedAt`, `SharedFile.SharedAt`).
+    The timestamp-inference approach breaks down for deletion specifically -
+    with a real hard delete, the row a sync client would need to see "this
+    was deleted" is exactly the row that is now gone. An explicit journal,
+    written to at the moment of each mutation, sidesteps this entirely and
+    is genuinely how real delta-sync systems (Dropbox included) work.
+    Deviates from the reference spec's 3 generic change types
+    (created/updated/deleted) in favor of 4 specific ones
+    (Created/Uploaded/Shared/Deleted) matching our actual mutation points -
+    a shared file is a distinct kind of event from an upload finishing, not
+    a generic "update." One row is written per *affected user*, not per
+    file mutation - a file shared with two people produces two rows.
+
+41. **`ChangeEvent.FileId` is deliberately not a foreign key to
+    `FileMetadata`, but `ChangeEvent.UserId` is a real FK with cascade.**
+    Asymmetric on purpose: a `Deleted` event must remain readable after the
+    file row it describes is gone (no FK, plus a denormalized `FileName`
+    snapshot since there is nowhere left to join to), whereas it is correct
+    for a user's events to disappear if the user themselves is deleted (a
+    real FK is the right tool there).
+
+42. **`DELETE /files/{id}` was added in Step 8, not planned as its own
+    step.** It became necessary infrastructure rather than a scope
+    decision on its own: the `Deleted` change type has no real event
+    source without something to delete. Owner-only, best-effort S3
+    cleanup (`AbortMultipartUploadAsync` for a still-in-progress multipart
+    upload, `DeleteObjectAsync` otherwise - safe even when no object was
+    ever actually uploaded, since S3 `DELETE` is idempotent) that
+    prioritizes the database row actually disappearing over a perfectly
+    clean bucket; a storage-cleanup failure is swallowed rather than
+    blocking the delete. See Known Limitations.
+
+43. **`ChangeEventRecorder` is a two-step API: `Record()` then
+    `PublishPendingAsync()`, called separately by the caller.** `Record()`
+    only stages a row (no `SaveChangesAsync` of its own), so it commits
+    atomically with whatever mutation triggered it. `PublishPendingAsync()`
+    is called only after the caller's own `SaveChangesAsync` has already
+    succeeded, so a SignalR client is never pushed a notification for a
+    change that failed to actually persist.
+
+44. **SignalR JWT auth reads the token from an `access_token` query
+    parameter, but only for requests to the hub path specifically** - the
+    documented ASP.NET Core pattern, necessary because browsers/WebSocket
+    clients cannot always set a custom `Authorization` header on the
+    connection the way an ordinary HTTP API call can.
+
+45. **SignalR's Hub Protocol needed its own separate
+    `AddJsonProtocol(...).PayloadSerializerOptions` enum-as-string
+    configuration** - confirmed as a real, distinct bug, not an assumption:
+    a live push arrived with `"type":0` instead of `"Created"` before this
+    was added, proving `AddControllers().AddJsonOptions(...)`'s converter
+    (decision for Step 8 Part 2) does not apply to SignalR at all; the two
+    serialize independently.
+
+46. **Verification for Part 3 used a throwaway `.cs` file-based app
+    (`dotnet run script.cs`), not a project added to the solution** -
+    consistent with the Step 1 decision against a permanent test project.
+    Two real bugs surfaced during that verification were in the throwaway
+    script's own JSON handling (file-based apps default to
+    reflection-disabled JSON), not in `Dropbox.Api` - confirmed by verbose
+    client-side logging showing a push genuinely arriving over the
+    WebSocket before failing to deserialize, which is what justified
+    fixing the script rather than suspecting the server.
+
 ## Known limitations
 
 Deliberate, documented gaps - not oversights.
@@ -367,6 +434,23 @@ Deliberate, documented gaps - not oversights.
   original Step 7 scope (which was specifically about sharing); a real
   gap once a client (Step 11) needs to render something like a file
   browser.
+- **No pagination on `GET /files/changes?since=`.** Returns every matching
+  row unbounded. Fine at this project's scale; a real gap if the event log
+  grows large or `since` is omitted on an account with a long history.
+- **No retention/cleanup policy on `ChangeEvents`.** The table grows
+  forever - every mutation adds rows that are never pruned. Trigger to
+  revisit: if disk usage becomes a real concern, or when old events are
+  clearly no longer useful to any client.
+- **SignalR has no backplane (e.g. Redis) configured.** Group membership is
+  tracked in-memory on a single server instance, which is exactly right
+  for this project's scope (one process, local-only) but would not
+  broadcast correctly across multiple server instances in a real
+  horizontally-scaled deployment.
+- **No documented client reconnection/catch-up pattern.** A real client
+  should call `GET /files/changes?since=<last-known-timestamp>` after any
+  reconnect to pick up whatever it missed while disconnected - the API
+  supports this, but no reference client exists yet that actually does it
+  correctly. Relevant once Step 11's web client needs real sync behavior.
 
 ## Local environment
 
