@@ -19,3 +19,5 @@ public record ShareFileRequest(List<string> Emails);
 public record ShareResult(string Email, bool Success, string Reason);
 
 public record ShareFileResponse(List<ShareResult> Results);
+
+public record SharedFileSummary(Guid FileId, string Name, long Size, string? MimeType, Guid OwnerId, DateTimeOffset SharedAt);

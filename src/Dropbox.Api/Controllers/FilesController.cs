@@ -347,4 +347,25 @@ public class FilesController(
 
         return Ok(new ShareFileResponse(results));
     }
+
+    [HttpGet("shared-with-me")]
+    public async Task<ActionResult<List<SharedFileSummary>>> ListSharedWithMe()
+    {
+        var callerId = Guid.Parse(User.FindFirstValue(JwtRegisteredClaimNames.Sub)!);
+
+        var shared = await db.SharedFiles
+            .Where(s => s.UserId == callerId)
+            .Include(s => s.File)
+            .OrderByDescending(s => s.SharedAt)
+            .Select(s => new SharedFileSummary(
+                s.File!.Id,
+                s.File.Name,
+                s.File.Size,
+                s.File.MimeType,
+                s.File.OwnerId,
+                s.SharedAt))
+            .ToListAsync();
+
+        return Ok(shared);
+    }
 }
