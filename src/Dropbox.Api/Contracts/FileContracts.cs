@@ -25,3 +25,5 @@ public record ShareFileResponse(List<ShareResult> Results);
 public record SharedFileSummary(Guid FileId, string Name, long Size, string? MimeType, Guid OwnerId, DateTimeOffset SharedAt);
 
 public record ChangeEventSummary(Guid FileId, string FileName, ChangeType Type, DateTimeOffset OccurredAt);
+
+public record FileSummary(Guid Id, string Name, long Size, string? MimeType, FileStatus Status, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt);

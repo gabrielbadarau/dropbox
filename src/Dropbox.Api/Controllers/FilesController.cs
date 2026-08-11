@@ -445,4 +445,18 @@ public class FilesController(
 
         return Ok(changes);
     }
+
+    [HttpGet("mine")]
+    public async Task<ActionResult<List<FileSummary>>> ListMyFiles()
+    {
+        var callerId = Guid.Parse(User.FindFirstValue(JwtRegisteredClaimNames.Sub)!);
+
+        var files = await db.Files
+            .Where(f => f.OwnerId == callerId)
+            .OrderByDescending(f => f.CreatedAt)
+            .Select(f => new FileSummary(f.Id, f.Name, f.Size, f.MimeType, f.Status, f.CreatedAt, f.UpdatedAt))
+            .ToListAsync();
+
+        return Ok(files);
+    }
 }
