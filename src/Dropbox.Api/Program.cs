@@ -133,8 +133,13 @@ const string corsPolicyName = "client";
 var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? [];
 builder.Services.AddCors(options =>
 {
+    // AllowCredentials is required for the SignalR hub specifically: its
+    // negotiate request is sent with credentials: include by the JS client,
+    // and the browser rejects the preflight response unless the server
+    // echoes Access-Control-Allow-Credentials: true. WithOrigins (not
+    // AllowAnyOrigin) is required for AllowCredentials to be legal at all.
     options.AddPolicy(corsPolicyName, policy =>
-        policy.WithOrigins(allowedOrigins).AllowAnyHeader().AllowAnyMethod());
+        policy.WithOrigins(allowedOrigins).AllowAnyHeader().AllowAnyMethod().AllowCredentials());
 });
 
 var app = builder.Build();

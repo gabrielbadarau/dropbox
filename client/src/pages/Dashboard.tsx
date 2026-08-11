@@ -4,19 +4,23 @@ import FileList from "../components/FileList";
 import ConfirmDialog from "../components/ConfirmDialog";
 import ShareDialog from "../components/ShareDialog";
 import UploadProgress, { type UploadItem } from "../components/UploadProgress";
+import SyncNotifications from "../components/SyncNotifications";
 import { uploadFile } from "../lib/upload";
+import { useChangesHub } from "../lib/signalr";
+import { useAuth } from "../lib/auth";
 import {
   deleteFile,
   getDownloadUrl,
   listMyFiles,
   listSharedWithMe,
 } from "../lib/files";
-import type { FileSummary, SharedFileSummary } from "../lib/types";
+import type { ChangeEventSummary, FileSummary, SharedFileSummary } from "../lib/types";
 import { FileIcon, SpinnerIcon, UploadIcon, UsersIcon } from "../components/icons";
 
 type Tab = "mine" | "shared";
 
 export default function Dashboard() {
+  const { user } = useAuth();
   const [tab, setTab] = useState<Tab>("mine");
   const [myFiles, setMyFiles] = useState<FileSummary[] | null>(null);
   const [sharedFiles, setSharedFiles] = useState<SharedFileSummary[] | null>(
@@ -27,6 +31,9 @@ export default function Dashboard() {
   const [deleting, setDeleting] = useState(false);
   const [shareFileId, setShareFileId] = useState<string | null>(null);
   const [uploads, setUploads] = useState<UploadItem[]>([]);
+  const [notifications, setNotifications] = useState<
+    (ChangeEventSummary & { id: string })[]
+  >([]);
   const [dragActive, setDragActive] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -47,6 +54,18 @@ export default function Dashboard() {
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  useChangesHub(
+    useCallback((event: ChangeEventSummary) => {
+      const id = crypto.randomUUID();
+      setNotifications((items) => [...items, { ...event, id }]);
+      setTimeout(() => {
+        setNotifications((items) => items.filter((item) => item.id !== id));
+      }, 4000);
+      refresh();
+    }, [refresh]),
+    !!user,
+  );
 
   function startUploads(files: FileList | File[]) {
     for (const file of Array.from(files)) {
@@ -252,6 +271,8 @@ export default function Dashboard() {
         items={uploads}
         onDismiss={(id) => setUploads((items) => items.filter((i) => i.id !== id))}
       />
+
+      <SyncNotifications items={notifications} />
     </Layout>
   );
 }
