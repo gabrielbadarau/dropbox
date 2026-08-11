@@ -47,8 +47,15 @@ conversation this file originated from for the full process.
   - HTTPS end to end, presigned URL expiry review, encryption-at-rest note
 - [ ] **Step 10 - Performance deep dive (stretch)**
   - Compression, content-defined chunking / delta sync discussion (implementation depth TBD)
-- [ ] **Step 11 - Minimal React web client**
-  - Once core backend flows are solid; visualizes upload/download/share/sync end to end
+- [x] **Step 11 - Minimal React web client** (built out of order, ahead of
+      Steps 9-10 - see decision #47)
+  - [x] Part A: Containerize `Dropbox.Api`, consolidate into one `docker-compose.yml`
+  - [x] Part B: React client scaffold (Vite+React+TS+Tailwind v4, auth, routing)
+  - [x] Part C: `GET /files/mine`, real file browser UI (list/download/delete)
+  - [x] Part D: Upload with real progress (single-PUT and chunked multipart)
+  - [x] Part E: Share dialog
+  - [x] Part F: Live sync via SignalR in the UI
+  - [x] Part G: Final visual polish pass
 
 Status legend: unchecked = not started. This list is updated as we go; if a
 step's scope changes mid-flight, that's a Decisions Log entry, not a silent edit.
@@ -373,6 +380,122 @@ Each entry: what we chose, why, and (if applicable) what we reversed and why.
     WebSocket before failing to deserialize, which is what justified
     fixing the script rather than suspecting the server.
 
+47. **Step 11 (React web client) built ahead of Steps 9-10, on explicit
+    request** - "let's go and build a minimal react web client where we can
+    test this... I guess you can also link to docker, so that we run one
+    big docker compose." A deliberate reordering, logged here rather than a
+    silent skip: Steps 9 (security deep dive) and 10 (performance deep dive)
+    remain planned, not abandoned - see the step plan checkboxes above.
+
+48. **`Dropbox.Api` containerized and folded into the same `docker-compose.yml`**
+    as Postgres/MinIO, rather than left as a host-run process. Multi-stage
+    `Dockerfile` (SDK image to build/publish, smaller ASP.NET runtime image
+    to run), `HEALTHCHECK` against the existing `/health` endpoint. One
+    `docker compose up -d` now starts the entire stack. `JWT_SIGNING_KEY`
+    moved from .NET User Secrets-only into `.env` as well (decision #17's
+    reasoning still holds for the host-run dev path; the containerized path
+    has no User Secrets store to read from, so it needs the value some other
+    way, and `.env` is already the established pattern for local secrets -
+    decision #16).
+
+49. **A second, differently-configured `IAmazonS3` client added via keyed DI**
+    (`AddKeyedSingleton<IAmazonS3>("public", ...)`), used only for the three
+    presigned-URL-generating call sites. Real bug forced this, not a
+    preference: presigned URLs generated with the API's internal
+    `http://minio:9000` container-network address are meaningless to a
+    browser on the host, which can only reach `http://localhost:9000`.
+    Tried the cheap fix first (string-swap the hostname after signing, same
+    trick as decision #27's scheme workaround) - it does NOT work, and
+    produces a real `SignatureDoesNotMatch`, because SigV4's
+    `X-Amz-SignedHeaders=host` means the `Host` header value itself is part
+    of what's cryptographically signed, unlike the scheme. Fixed properly
+    with a distinct `StorageOptions.PublicServiceUrl` and a second client
+    scoped to just those three call sites; the original client (internal
+    `http://minio:9000`) is still what the API uses for every direct S3
+    operation (`HeadObject`, `CompleteMultipartUpload`, etc.), since those
+    calls happen server-to-server and never leave the Docker network.
+
+50. **CORS added to `Dropbox.Api`** (`Cors:AllowedOrigins` config,
+    `AddCors`/`UseCors`), required the moment a browser-based client on a
+    different origin (`localhost:5173`) exists at all - every prior client
+    was `curl`, which does not enforce CORS. Initially added *without*
+    `AllowCredentials()`; this was a real, confirmed bug, not caution -
+    the SignalR JS client's negotiate request is sent with
+    `credentials: include`, and the browser rejected the preflight outright
+    with `Access-Control-Allow-Credentials` missing, breaking Part F's live
+    push entirely until fixed. `AllowCredentials()` requires explicit
+    `WithOrigins` (already the case) rather than a wildcard origin.
+
+51. **MinIO needs zero explicit CORS configuration for the client's direct
+    presigned-URL `PUT`/`GET` calls.** Tried adding a `PutCORSConfigurationAsync`
+    bucket-CORS bootstrap first, assuming MinIO would need it like real S3 -
+    this crashed the API on every startup (`AmazonS3Exception: ... not
+    implemented`), confirmed independently via `mc cors set` hitting the same
+    error. A direct curl `OPTIONS` preflight against a real object key from
+    the actual client origin proved MinIO already answers correctly with no
+    configuration. Removed the bootstrap entirely.
+
+52. **React client stack: Vite + React + TypeScript + Tailwind CSS v4 (CSS-first
+    `@theme`, no `tailwind.config.js`) + React Router + Axios.** Chosen for
+    being the current idiomatic, low-ceremony combination for a small SPA -
+    no meta-framework (Next.js etc.) needed for a client this size with no
+    server-rendering requirement.
+
+53. **JWT stored in `localStorage`, not an httpOnly cookie or in-memory only.**
+    Simplest option that survives a page refresh without a silent-refresh
+    flow to fall back on - and there's no refresh token to silently redeem
+    anyway (decision #23). Known XSS-exposure tradeoff of `localStorage`
+    accepted at this project's scale; see Known Limitations.
+
+54. **Upload progress uses `XMLHttpRequest`, not `fetch`.** Concrete
+    technical reason, not a style preference: `fetch`'s request body has no
+    upload progress event equivalent to `XMLHttpRequest.upload.onprogress` -
+    without it, showing a real percentage-based progress bar (the user's
+    explicit ask) is not possible for the `PUT` calls to presigned URLs.
+
+55. **Client picks single-PUT vs. chunked multipart upload by the same 8MB
+    threshold the chunk size itself uses**, mirroring the backend's existing
+    Step 4 vs. Step 6 split. Large-file chunks upload sequentially, not in
+    parallel - deliberate: aggregate progress is then just "bytes sent so
+    far / total," rather than reconciling several concurrent `XMLHttpRequest`
+    progress streams into one number. Parallel chunk upload would be faster
+    but was cut as unnecessary complexity for a local learning project: see
+    Known Limitations.
+
+56. **Client-side SHA-256 fingerprinting via the Web Crypto API**
+    (`crypto.subtle.digest`), reading the whole file into memory first via
+    `file.arrayBuffer()`. Matches the backend's existing fingerprint-based
+    resumability (decision #34) - a resumed upload only skips chunks if the
+    client can prove it's resuming the *same* file, not just a same-sized one.
+
+57. **`GET /files/mine` added as new backend surface for Part C**, not
+    originally planned in Step 7 (whose scope was specifically sharing) -
+    closes the "no way to list your own files" gap called out in Known
+    Limitations since Step 7. Owner-only by construction (filters on the
+    caller's own ID from the JWT), same pattern as every other
+    per-user query in the API.
+
+58. **`ShareDialog` and `ConfirmDialog` are custom components, not the
+    browser's native `prompt()`/`confirm()`.** Originally used `confirm()`
+    for delete; discovered during testing that it gets silently
+    auto-dismissed with zero network request in the automated browser tool
+    used for verification (confirmed via console log:
+    `Page dialog suppressed (confirm): ... confirm() returned false`).
+    Replaced rather than worked around, since a styled, in-DOM dialog is a
+    strict improvement anyway - consistent with the rest of the UI, and
+    actually testable going forward.
+
+59. **`useChangesHub` React hook wraps the `@microsoft/signalr` client**,
+    connecting to the same `ChangesHub` built in Step 8 Part 3.
+    `accessTokenFactory` reads the JWT out of the same `localStorage` key the
+    REST API calls use (decision #53), so the hub authenticates the same way
+    every other request does. Deliberately fails silently on connection
+    error (`.catch(() => {})`) and auto-reconnects
+    (`.withAutomaticReconnect()`) - real-time push is additive on top of the
+    existing `GET /files/changes` polling endpoint from Step 8 Part 2, so a
+    hub that never connects should degrade to "just polling," not break the
+    app.
+
 ## Known limitations
 
 Deliberate, documented gaps - not oversights.
@@ -446,11 +569,30 @@ Deliberate, documented gaps - not oversights.
   for this project's scope (one process, local-only) but would not
   broadcast correctly across multiple server instances in a real
   horizontally-scaled deployment.
-- **No documented client reconnection/catch-up pattern.** A real client
-  should call `GET /files/changes?since=<last-known-timestamp>` after any
-  reconnect to pick up whatever it missed while disconnected - the API
-  supports this, but no reference client exists yet that actually does it
-  correctly. Relevant once Step 11's web client needs real sync behavior.
+- **No documented client reconnection/catch-up pattern.** The React client's
+  `useChangesHub` (Step 11 Part F) auto-reconnects the SignalR connection
+  itself, but does not call `GET /files/changes?since=` on reconnect to
+  backfill whatever was missed while disconnected - it relies on the
+  initial full `refresh()` on page load plus whatever live events arrive
+  after reconnecting. A real gap if a client is offline for a while and
+  then reconnects without a full page reload.
+- **React client's JWT lives in `localStorage`, with no refresh token
+  (decision #53, inherited from #23).** Session ends after 60 minutes with
+  no silent renewal - the user is bounced to `/login` on the next 401.
+  `localStorage` is also readable by any script on the page, a real XSS
+  exposure surface accepted at this project's scale; an httpOnly cookie
+  would close it but needs CSRF handling in exchange. Trigger to revisit:
+  if this client ever needs to be more than a local learning-project demo.
+- **Large-file chunk upload is sequential, not parallel** (decision #55).
+  Correct and simple, but slower than it could be for very large files on
+  a fast connection - each chunk waits for the previous one's `PUT` and
+  `PATCH` chunk-report round trip before starting. Trigger to revisit: if
+  upload speed on large files actually becomes annoying at this project's
+  local-network scale.
+- **No client-side retry on a failed upload chunk.** An aborted or
+  network-failed `PUT` fails the whole upload; the user has to re-initiate,
+  which resumes via fingerprint matching (decision #34) rather than
+  restarting from zero, but there's no automatic in-flight retry.
 
 ## Local environment
 
