@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Layout from "../components/Layout";
 import FileList from "../components/FileList";
 import ConfirmDialog from "../components/ConfirmDialog";
+import ShareDialog from "../components/ShareDialog";
 import UploadProgress, { type UploadItem } from "../components/UploadProgress";
 import { uploadFile } from "../lib/upload";
 import {
@@ -24,6 +25,7 @@ export default function Dashboard() {
   const [error, setError] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [shareFileId, setShareFileId] = useState<string | null>(null);
   const [uploads, setUploads] = useState<UploadItem[]>([]);
   const [dragActive, setDragActive] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -211,6 +213,7 @@ export default function Dashboard() {
             files={myFiles!.map((f) => ({ ...f, kind: "mine" as const }))}
             onDownload={handleDownload}
             onDelete={setConfirmDeleteId}
+            onShare={setShareFileId}
             emptyLabel="No files yet. Drag files here, or click Upload."
           />
         ) : (
@@ -234,6 +237,14 @@ export default function Dashboard() {
           danger
           onConfirm={confirmDelete}
           onCancel={() => setConfirmDeleteId(null)}
+        />
+      )}
+
+      {shareFileId && (
+        <ShareDialog
+          fileId={shareFileId}
+          fileName={myFiles?.find((f) => f.id === shareFileId)?.name ?? ""}
+          onClose={() => setShareFileId(null)}
         />
       )}
 
