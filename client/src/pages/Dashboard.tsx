@@ -1,7 +1,9 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Layout from "../components/Layout";
 import FileList from "../components/FileList";
 import ConfirmDialog from "../components/ConfirmDialog";
+import UploadProgress, { type UploadItem } from "../components/UploadProgress";
+import { uploadFile } from "../lib/upload";
 import {
   deleteFile,
   getDownloadUrl,
@@ -9,8 +11,7 @@ import {
   listSharedWithMe,
 } from "../lib/files";
 import type { FileSummary, SharedFileSummary } from "../lib/types";
-import { SpinnerIcon, UsersIcon } from "../components/icons";
-import { FileIcon } from "../components/icons";
+import { FileIcon, SpinnerIcon, UploadIcon, UsersIcon } from "../components/icons";
 
 type Tab = "mine" | "shared";
 
@@ -23,6 +24,9 @@ export default function Dashboard() {
   const [error, setError] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [uploads, setUploads] = useState<UploadItem[]>([]);
+  const [dragActive, setDragActive] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const refresh = useCallback(async () => {
     setError(null);
@@ -41,6 +45,58 @@ export default function Dashboard() {
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  function startUploads(files: FileList | File[]) {
+    for (const file of Array.from(files)) {
+      const id = crypto.randomUUID();
+      setUploads((items) => [
+        ...items,
+        { id, name: file.name, size: file.size, progress: 0, status: "uploading" },
+      ]);
+
+      const handle = uploadFile(file, (fraction) => {
+        setUploads((items) =>
+          items.map((item) =>
+            item.id === id ? { ...item, progress: fraction } : item,
+          ),
+        );
+      });
+
+      handle.promise
+        .then(() => {
+          setUploads((items) =>
+            items.map((item) =>
+              item.id === id ? { ...item, status: "done", progress: 1 } : item,
+            ),
+          );
+          refresh();
+        })
+        .catch((err) => {
+          setUploads((items) =>
+            items.map((item) =>
+              item.id === id
+                ? { ...item, status: "error", error: err?.message }
+                : item,
+            ),
+          );
+        });
+    }
+  }
+
+  function handleFileInputChange(e: React.ChangeEvent<HTMLInputElement>) {
+    if (e.target.files && e.target.files.length > 0) {
+      startUploads(e.target.files);
+      e.target.value = "";
+    }
+  }
+
+  function handleDrop(e: React.DragEvent) {
+    e.preventDefault();
+    setDragActive(false);
+    if (e.dataTransfer.files.length > 0) {
+      startUploads(e.dataTransfer.files);
+    }
+  }
 
   async function handleDownload(fileId: string, name: string) {
     const { downloadUrl } = await getDownloadUrl(fileId);
@@ -73,6 +129,20 @@ export default function Dashboard() {
     <Layout>
       <div className="mb-6 flex items-center justify-between">
         <h1 className="text-lg font-semibold tracking-tight">Your files</h1>
+        <button
+          onClick={() => fileInputRef.current?.click()}
+          className="flex items-center gap-1.5 rounded-lg bg-accent-600 px-3.5 py-2 text-sm font-medium text-white transition hover:bg-accent-700"
+        >
+          <UploadIcon className="h-4 w-4" />
+          Upload
+        </button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          multiple
+          className="hidden"
+          onChange={handleFileInputChange}
+        />
       </div>
 
       <div className="mb-5 flex gap-1 rounded-lg bg-neutral-100 p-1 text-sm dark:bg-neutral-900">
@@ -114,28 +184,47 @@ export default function Dashboard() {
         </p>
       )}
 
-      {loading ? (
-        <div className="flex justify-center py-20 text-neutral-400">
-          <SpinnerIcon className="h-6 w-6 animate-spin" />
-        </div>
-      ) : tab === "mine" ? (
-        <FileList
-          files={myFiles!.map((f) => ({ ...f, kind: "mine" as const }))}
-          onDownload={handleDownload}
-          onDelete={setConfirmDeleteId}
-          emptyLabel="No files yet. Upload something to get started."
-        />
-      ) : (
-        <FileList
-          files={sharedFiles!.map((f) => ({
-            ...f,
-            id: f.fileId,
-            kind: "shared" as const,
-          }))}
-          onDownload={handleDownload}
-          emptyLabel="Nothing has been shared with you yet."
-        />
-      )}
+      <div
+        onDragOver={(e) => {
+          e.preventDefault();
+          setDragActive(true);
+        }}
+        onDragLeave={() => setDragActive(false)}
+        onDrop={handleDrop}
+        className={`relative rounded-2xl transition ${dragActive ? "ring-2 ring-accent-500 ring-offset-2 ring-offset-neutral-50 dark:ring-offset-neutral-950" : ""}`}
+      >
+        {dragActive && (
+          <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-2xl bg-accent-50/90 dark:bg-accent-950/60">
+            <p className="flex items-center gap-2 text-sm font-medium text-accent-700 dark:text-accent-300">
+              <UploadIcon className="h-4 w-4" />
+              Drop to upload
+            </p>
+          </div>
+        )}
+
+        {loading ? (
+          <div className="flex justify-center py-20 text-neutral-400">
+            <SpinnerIcon className="h-6 w-6 animate-spin" />
+          </div>
+        ) : tab === "mine" ? (
+          <FileList
+            files={myFiles!.map((f) => ({ ...f, kind: "mine" as const }))}
+            onDownload={handleDownload}
+            onDelete={setConfirmDeleteId}
+            emptyLabel="No files yet. Drag files here, or click Upload."
+          />
+        ) : (
+          <FileList
+            files={sharedFiles!.map((f) => ({
+              ...f,
+              id: f.fileId,
+              kind: "shared" as const,
+            }))}
+            onDownload={handleDownload}
+            emptyLabel="Nothing has been shared with you yet."
+          />
+        )}
+      </div>
 
       {confirmDeleteId && (
         <ConfirmDialog
@@ -147,6 +236,11 @@ export default function Dashboard() {
           onCancel={() => setConfirmDeleteId(null)}
         />
       )}
+
+      <UploadProgress
+        items={uploads}
+        onDismiss={(id) => setUploads((items) => items.filter((i) => i.id !== id))}
+      />
     </Layout>
   );
 }
